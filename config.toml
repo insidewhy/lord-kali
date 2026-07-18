@@ -6,6 +6,46 @@
 enabled = true
 path = "~/.local/state/lord-kali/hook.jsonl"
 
+# Central approval TUI (opt-in; default off). When enabled AND `lord-kali watch`
+# is running, ask/pass-through calls are routed to that TUI instead of Claude
+# Code's own per-terminal prompt. With no TUI running, behavior is unchanged.
+# [approval]
+# enabled = true
+# live_rules = "99-live.toml"            # file the TUI appends allow/deny-always rules to
+# state_dir = "~/.local/state/lord-kali" # queue + heartbeat live here
+# Destructive commands (rm, dd, Remove-Item, …) always default to tight, path-specific
+# rules in the TUI; list extra commands here to give them the same treatment.
+# guardrail_commands = ["terraform", "kubectl"]
+# Timers (milliseconds; omit any to keep the built-in default shown). self_timeout_ms is the
+# max the blocked gate waits on the TUI before handing off to Claude Code's own prompt — keep
+# it under Claude Code's 60s hook timeout. heartbeat_fresh_ms is how stale the TUI heartbeat
+# may get before the gate treats it as dead and degrades to pass-through. pending_timeout_ms
+# is how long `watch --tail` tracks an un-executed call before flagging it. poll_ms /
+# watch_poll_ms are the gate and watch/TUI loop poll intervals.
+# self_timeout_ms = 50000
+# poll_ms = 200
+# heartbeat_fresh_ms = 3000
+# pending_timeout_ms = 60000
+# watch_poll_ms = 200
+
+# LLM auto-approval (opt-in; default off). When enabled AND `lord-kali watch` is running, a
+# passthrough the operator hasn't touched for `queue_wait_ms` is sent to a safety model (only
+# Bash/PowerShell calls — MCP and WebFetch skip it). A "safe" verdict becomes a proposal that auto-applies as a TIGHT allow rule after
+# `proposal_wait_ms` if still untouched. Anything else (unsafe/malformed/error) just passes
+# through — the model never auto-denies. The key is read from the named env var, never config.
+# [approval.llm]
+# enabled = true
+# model = "mistralai/mistral-small-3.2-24b-instruct"  # dense non-reasoning 24B; glm-4-32b (eval winner) was delisted
+# api_key_env = "OPENROUTER_API_KEY"
+# queue_wait_ms = 10000             # operator grace before consulting the model
+# proposal_wait_ms = 5000           # operator grace after a proposal before auto-applying
+# timeout_ms = 8000                 # per-attempt; with 2 attempts fits the 50s hook budget
+# max_attempts = 2
+# base_url = "https://openrouter.ai/api/v1/chat/completions"
+# The prompt defaults to the locked taxonomy in code; override here to tune without rebuilding.
+# system = "..."
+# user = "tool: {{tool}}\ncwd: {{cwd}}\ncommand: {{command}}"
+
 [bash]
 allowed_commands = [
   "awk", "basename", "cat", "cut", "date", "df", "diff", "dirname",
@@ -72,6 +112,37 @@ decision = "allow"
 [[web-fetch.rules]]
 url = "/[^?]*/"
 decision = "allow"
+
+# allow every web search (a search string carries no side effects); the key is `query`
+[[web-search.rules]]
+query = "**"
+decision = "allow"
+
+# MCP tool gating. Rules key on the full tool name (mcp__<server>__<tool>); glob and
+# /regex/ both work. Matching is on the name only — the tool's structured arguments are
+# never inspected (they are shown read-only in the approval TUI). First match wins, so a
+# specific `ask`/`deny` must precede a broader `allow`.
+[[mcp.rules]]
+tool = "mcp__playwright__browser_fill_form"
+decision = "ask"                       # eyeball form fills in the TUI even if the rest is allowed
+[[mcp.rules]]
+tool = "mcp__playwright__*"
+decision = "allow"
+
+# File-edit gating (opt-in; default off). When enabled, file MUTATIONS (Write/Edit/MultiEdit/
+# NotebookEdit) are gated by target path, and reads (Read/Glob/Grep) are gated only when their
+# path escapes cwd. Best paired with [approval] + `lord-kali watch`: unmatched calls route to
+# the TUI where you can whitelist them (apply-always persists a [[file.rules]] rule, scoped via
+# the `t` ladder: full path → dir → cwd subtree → **/*.ext). File calls never reach the LLM.
+# [file]
+# enabled = true
+# mutation_scope = "all"        # "all": every mutation routes to the TUI (see and whitelist them).
+#                               # "outside_cwd": only mutations whose path escapes cwd are gated.
+#
+# [[file.rules]]                # first-match-wins, glob or /regex/ on the resolved absolute path
+# path = "**/*.cs"
+# decision = "allow"
+# projects = ["~/co-flo-apigateway"]
 
 # Per-rule project scoping: restrict a rule to specific directories
 #
